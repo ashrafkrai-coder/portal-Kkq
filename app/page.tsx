@@ -182,8 +182,8 @@ export default function HomePage() {
     </div></header>
     <div className="mx-auto max-w-5xl px-4 py-5">
       {tab === "dashboard" && <Dashboard students={students} sessions={sessions} tasks={tasks}/>} 
-      {tab === "kehadiran" && <AttendanceView students={students} sessions={sessions} sessionNo={sessionNo} setSessionNo={setSessionNo} setSessions={setSessions} onStudent={selectStudent}/>} 
-      {tab === "tugasan" && <TasksView students={students} tasks={tasks} taskId={taskId} setTaskId={setTaskId} setTasks={setTasks} onAddTask={openAddTask}/>}
+      {tab === "kehadiran" && <AttendanceView students={students} setStudents={setStudents} sessions={sessions} sessionNo={sessionNo} setSessionNo={setSessionNo} setSessions={setSessions} onStudent={selectStudent} notify={notify}/>} 
+      {tab === "tugasan" && <TasksView students={students} setStudents={setStudents} tasks={tasks} taskId={taskId} setTaskId={setTaskId} setTasks={setTasks} onAddTask={openAddTask} notify={notify}/>}
       {tab === "hafazan" && <HafazanView students={students} onStudent={selectStudent}/>} 
       {tab === "pbd" && <PbdMarkahView students={students} onPbdChange={updateStudentPbd} onExamChange={updateStudentExam}/>} 
       {tab === "profil" && <ProfileView students={filtered} search={search} setSearch={setSearch} profileForm={profileForm} setProfileForm={setProfileForm} onStudent={selectStudent}/>} 
@@ -226,28 +226,73 @@ function Dashboard({ students, sessions, tasks }: { students: Student[]; session
     <section className="card"><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-wider text-slate-400">Perjumpaan seterusnya</p><h3 className="mt-1 font-black">Sesi 6 • {fmtDate(sessions[5])}</h3></div><span className="rounded-xl bg-lime-100 px-3 py-1.5 text-xs font-bold text-lime-800">Akan datang</span></div></section></div>;
 }
 
-function AttendanceView({ students, sessions, sessionNo, setSessionNo, setSessions, onStudent }: { students: Student[]; sessions: string[]; sessionNo: number; setSessionNo: (n: number) => void; setSessions: (x: string[]) => void; onStudent: (id: string) => void }) {
+function AttendanceView({ students, setStudents, sessions, sessionNo, setSessionNo, setSessions, onStudent, notify }: { students: Student[]; setStudents: React.Dispatch<React.SetStateAction<Student[]>>; sessions: string[]; sessionNo: number; setSessionNo: (n: number) => void; setSessions: (x: string[]) => void; onStudent: (id: string) => void; notify: (msg:string)=>void }) {
   const [form, setForm] = useState("");
   const [search, setSearch] = useState("");
+  const [rapidScanState, setRapidScanState] = useState<"idle"|"scanning"|"unsupported">("idle");
   const filtered = filterStudentRecords(students, form, search);
   const present = filtered.filter(s => s.attendance[sessionNo]);
   const attendanceRate = filtered.length ? Math.round(present.length / filtered.length * 100) : 0;
+  async function startRapidAttendance() {
+    setRapidScanState("scanning");
+    const NDEF = (window as unknown as { NDEFReader?: new () => { scan(): Promise<void>; onreading: ((e: { serialNumber?: string }) => void) | null } }).NDEFReader;
+    if (!NDEF) { setRapidScanState("unsupported"); return; }
+    try {
+      const reader = new NDEF();
+      await reader.scan();
+      reader.onreading = e => {
+        const uid = (e.serialNumber || "").replace(/[\s:-]/g, "").toUpperCase();
+        if (!uid) return;
+        setStudents(xs => {
+          const found = xs.find(s => s.id.replace(/[\s:-]/g, "").toUpperCase() === uid);
+          if (!found) { notify("Kad NFC belum didaftarkan"); navigator.vibrate?.([80,50,80]); return xs; }
+          if (found.attendance[sessionNo]) { notify(`${found.nama} sudah hadir`); navigator.vibrate?.(60); return xs; }
+          notify(`✓ ${found.nama} — HADIR`); navigator.vibrate?.(100);
+          return xs.map(s => s.id === found.id ? { ...s, attendance: { ...s.attendance, [sessionNo]: new Date().toISOString() } } : s);
+        });
+      };
+    } catch { setRapidScanState("unsupported"); }
+  }
   return <div className="space-y-5"><PageTitle title="Kehadiran KKQ" note="Pilih tingkatan dahulu, kemudian cari murid"/><StudentRecordFilter form={form} setForm={setForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod kehadiran."/>:<><div className="scrollbar-none flex gap-2 overflow-x-auto pb-1">{sessions.map((date, i) => <button key={date+i} onClick={() => setSessionNo(i+1)} className={`min-w-24 rounded-2xl p-3 text-left ${sessionNo === i+1 ? "bg-[#163c35] text-white shadow-lg" : "bg-white text-slate-600"}`}><b className="block text-sm">Sesi {i+1}</b><small className={sessionNo === i+1 ? "text-emerald-200" : "text-slate-400"}>{fmtDate(date).replace(" 2026", "")}</small></button>)}</div>
+    <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4"><div className="flex items-center gap-3"><span className="grid size-11 place-items-center rounded-full bg-[#163c35] text-white"><Nfc size={20}/></span><div className="min-w-0 flex-1"><b className="block text-sm text-emerald-950">Imbas Kehadiran Pantas</b><p className="text-xs text-emerald-700">Sesi {sessionNo} • sentuh kad satu demi satu</p></div></div><button onClick={startRapidAttendance} disabled={rapidScanState === "scanning"} className="mt-3 w-full rounded-2xl bg-[#163c35] py-3.5 text-sm font-bold text-white disabled:bg-emerald-700">{rapidScanState === "scanning" ? "Pengimbas aktif — sentuh kad seterusnya" : "Mula Imbas NFC"}</button>{rapidScanState === "unsupported"&&<p className="mt-2 text-center text-xs font-semibold text-amber-700">Web NFC tidak tersedia. Gunakan Chrome Android melalui HTTPS.</p>}</section>
     <section className="card"><div className="flex items-center gap-4"><div className="grid size-16 place-items-center rounded-2xl bg-emerald-50 text-2xl font-black text-emerald-800">{present.length}/{filtered.length}</div><div className="flex-1"><b>Kehadiran Sesi {sessionNo}</b><p className="text-sm text-slate-500">{attendanceRate}% murid hadir</p><Progress value={attendanceRate} className="mt-3 bg-emerald-100 [&_[data-slot=progress-indicator]]:bg-emerald-700"/></div></div><label className="mt-4 block text-xs font-bold text-slate-500">Tarikh perjumpaan<input type="date" value={sessions[sessionNo-1]} onChange={e => setSessions(sessions.map((d,i) => i === sessionNo-1 ? e.target.value : d))} className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm"/></label></section>
     <section><SectionTitle title="Senarai murid" note={`${present.length} hadir`}/><div className="space-y-2">{filtered.length?filtered.map(s => <StudentRow key={s.id} student={s} status={s.attendance[sessionNo] ? "Hadir" : "Belum"} good={!!s.attendance[sessionNo]} onClick={() => onStudent(s.id)}/>):<RecordEmpty/>}</div></section></>}</div>;
 }
 
-function TasksView({ students, tasks, taskId, setTaskId, setTasks, onAddTask }: { students: Student[]; tasks: Task[]; taskId: string; setTaskId: (x:string)=>void; setTasks:(x:Task[])=>void; onAddTask:(form?:string)=>void }) {
+function TasksView({ students, setStudents, tasks, taskId, setTaskId, setTasks, onAddTask, notify }: { students: Student[]; setStudents: React.Dispatch<React.SetStateAction<Student[]>>; tasks: Task[]; taskId: string; setTaskId: (x:string)=>void; setTasks:(x:Task[])=>void; onAddTask:(form?:string)=>void; notify:(msg:string)=>void }) {
   const [form, setForm] = useState("");
   const [search, setSearch] = useState("");
+  const [rapidScanState, setRapidScanState] = useState<"idle"|"scanning"|"unsupported">("idle");
   const filtered = filterStudentRecords(students, form, search);
   const formTasks = tasks.filter(task => task.tingkatan === form);
   const unassignedTasks = tasks.filter(task => !task.tingkatan || !TARGETS[task.tingkatan]);
   const current = formTasks.find(t => t.id === taskId) || formTasks[0], done = filtered.filter(s => s.tasks[current?.id]?.statusHantar).length;
   const taskRate = filtered.length ? Math.round(done / filtered.length * 100) : 0;
-  function changeForm(nextForm: string) { setForm(nextForm); setSearch(""); setTaskId(tasks.find(task => task.tingkatan === nextForm)?.id || ""); }
+  function changeForm(nextForm: string) { setForm(nextForm); setSearch(""); setTaskId(tasks.find(task => task.tingkatan === nextForm)?.id || ""); setRapidScanState("idle"); }
   function assignOldTask(id: string) { setTasks(tasks.map(task => task.id === id ? { ...task, tingkatan: form } : task)); if (!taskId) setTaskId(id); }
-  return <div className="space-y-5"><PageTitle title="Tugasan Buku" note="Pilih tingkatan dahulu, kemudian cari murid" action={<button onClick={()=>onAddTask(form)} aria-label="Tambah tugasan" className="grid size-11 place-items-center rounded-2xl bg-[#163c35] text-white"><Plus/></button>}/><StudentRecordFilter form={form} setForm={changeForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod tugasan."/>:<>{unassignedTasks.length>0&&<section className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><b className="text-sm text-amber-950">{unassignedTasks.length} tugasan lama belum mempunyai Tingkatan</b><p className="mt-1 text-xs leading-5 text-amber-800">Tetapkan tugasan berikut kepada {form} jika sesuai.</p><div className="mt-3 space-y-2">{unassignedTasks.map(task=><button key={task.id} onClick={()=>assignOldTask(task.id)} className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-3 py-2.5 text-left text-xs font-bold text-slate-700 shadow-sm"><span className="truncate">{task.tajuk}</span><span className="shrink-0 text-amber-700">Tetapkan</span></button>)}</div></section>}{formTasks.length?<><div className="scrollbar-none flex gap-2 overflow-x-auto">{formTasks.map(t => <button key={t.id} onClick={()=>setTaskId(t.id)} className={`min-w-48 rounded-2xl p-4 text-left ${current?.id===t.id ? "bg-sky-900 text-white" : "bg-white"}`}><BookOpenCheck size={19}/><b className="mt-3 block text-sm">{t.tajuk}</b><small className={current?.id===t.id ? "text-sky-200" : "text-slate-400"}>{t.tingkatan} • {fmtDate(t.tarikh)}</small></button>)}</div><section className="card"><div className="flex justify-between"><div><p className="text-sm text-slate-500">Telah menghantar</p><p className="text-3xl font-black">{done}<span className="text-base text-slate-400">/{filtered.length}</span></p></div><span className="grid size-14 place-items-center rounded-2xl bg-sky-50 font-black text-sky-800">{taskRate}%</span></div><Progress value={taskRate} className="mt-4 bg-sky-100 [&_[data-slot=progress-indicator]]:bg-sky-700"/></section><div className="space-y-2">{filtered.length?filtered.map(s => <StudentRow key={s.id} student={s} status={s.tasks[current?.id]?.statusHantar ? "Sudah" : "Belum"} good={!!s.tasks[current?.id]?.statusHantar}/>):<RecordEmpty/>}</div><button onClick={()=>{ if(current&&confirm("Padam tugasan ini?")){ const next=tasks.filter(t=>t.id!==current.id); setTasks(next); setTaskId(next.find(t=>t.tingkatan===form)?.id||""); }}} className="flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold text-red-600"><Trash2 size={17}/>Padam tugasan</button></>:<div className="rounded-2xl bg-white p-8 text-center"><BookOpenCheck className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-medium text-slate-400">Belum ada tugasan untuk {form}.</p><button onClick={()=>onAddTask(form)} className="mt-4 rounded-xl bg-[#163c35] px-4 py-2.5 text-xs font-bold text-white">Tambah tugasan</button></div>}</>}</div>;
+  async function startRapidTask() {
+    if (!current) return;
+    setRapidScanState("scanning");
+    const NDEF = (window as unknown as { NDEFReader?: new () => { scan(): Promise<void>; onreading: ((e: { serialNumber?: string }) => void) | null } }).NDEFReader;
+    if (!NDEF) { setRapidScanState("unsupported"); return; }
+    try {
+      const reader = new NDEF();
+      await reader.scan();
+      reader.onreading = e => {
+        const uid = (e.serialNumber || "").replace(/[\s:-]/g, "").toUpperCase();
+        if (!uid) return;
+        setStudents(xs => {
+          const found = xs.find(s => s.id.replace(/[\s:-]/g, "").toUpperCase() === uid);
+          if (!found) { notify("Kad NFC belum didaftarkan"); navigator.vibrate?.([80,50,80]); return xs; }
+          if (found.tingkatan !== current.tingkatan) { notify(`${found.nama} bukan ${current.tingkatan}`); navigator.vibrate?.([80,50,80]); return xs; }
+          if (found.tasks[current.id]?.statusHantar) { notify(`${found.nama} sudah hantar tugasan`); navigator.vibrate?.(60); return xs; }
+          notify(`✓ ${found.nama} — SUDAH HANTAR`); navigator.vibrate?.(100);
+          return xs.map(s => s.id === found.id ? { ...s, tasks: { ...s.tasks, [current.id]: { statusHantar: true, tarikhHantar: today() } } } : s);
+        });
+      };
+    } catch { setRapidScanState("unsupported"); }
+  }
+  return <div className="space-y-5"><PageTitle title="Tugasan Buku" note="Pilih tingkatan dahulu, kemudian cari murid" action={<button onClick={()=>onAddTask(form)} aria-label="Tambah tugasan" className="grid size-11 place-items-center rounded-2xl bg-[#163c35] text-white"><Plus/></button>}/><StudentRecordFilter form={form} setForm={changeForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod tugasan."/>:<>{unassignedTasks.length>0&&<section className="rounded-2xl border border-amber-200 bg-amber-50 p-4"><b className="text-sm text-amber-950">{unassignedTasks.length} tugasan lama belum mempunyai Tingkatan</b><p className="mt-1 text-xs leading-5 text-amber-800">Tetapkan tugasan berikut kepada {form} jika sesuai.</p><div className="mt-3 space-y-2">{unassignedTasks.map(task=><button key={task.id} onClick={()=>assignOldTask(task.id)} className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-3 py-2.5 text-left text-xs font-bold text-slate-700 shadow-sm"><span className="truncate">{task.tajuk}</span><span className="shrink-0 text-amber-700">Tetapkan</span></button>)}</div></section>}{formTasks.length?<><div className="scrollbar-none flex gap-2 overflow-x-auto">{formTasks.map(t => <button key={t.id} onClick={()=>{setTaskId(t.id);setRapidScanState("idle")}} className={`min-w-48 rounded-2xl p-4 text-left ${current?.id===t.id ? "bg-sky-900 text-white" : "bg-white"}`}><BookOpenCheck size={19}/><b className="mt-3 block text-sm">{t.tajuk}</b><small className={current?.id===t.id ? "text-sky-200" : "text-slate-400"}>{t.tingkatan} • {fmtDate(t.tarikh)}</small></button>)}</div><section className="rounded-2xl border border-sky-200 bg-sky-50 p-4"><div className="flex items-center gap-3"><span className="grid size-11 place-items-center rounded-full bg-sky-900 text-white"><Nfc size={20}/></span><div className="min-w-0 flex-1"><b className="block truncate text-sm text-sky-950">Imbas Hantar Tugasan Pantas</b><p className="truncate text-xs text-sky-700">{current?.tajuk}</p></div></div><button onClick={startRapidTask} disabled={rapidScanState === "scanning"} className="mt-3 w-full rounded-2xl bg-sky-900 py-3.5 text-sm font-bold text-white disabled:bg-sky-700">{rapidScanState === "scanning" ? "Pengimbas aktif — sentuh kad seterusnya" : "Mula Imbas NFC"}</button>{rapidScanState === "unsupported"&&<p className="mt-2 text-center text-xs font-semibold text-amber-700">Web NFC tidak tersedia. Gunakan Chrome Android melalui HTTPS.</p>}</section><section className="card"><div className="flex justify-between"><div><p className="text-sm text-slate-500">Telah menghantar</p><p className="text-3xl font-black">{done}<span className="text-base text-slate-400">/{filtered.length}</span></p></div><span className="grid size-14 place-items-center rounded-2xl bg-sky-50 font-black text-sky-800">{taskRate}%</span></div><Progress value={taskRate} className="mt-4 bg-sky-100 [&_[data-slot=progress-indicator]]:bg-sky-700"/></section><div className="space-y-2">{filtered.length?filtered.map(s => <StudentRow key={s.id} student={s} status={s.tasks[current?.id]?.statusHantar ? "Sudah" : "Belum"} good={!!s.tasks[current?.id]?.statusHantar}/>):<RecordEmpty/>}</div><button onClick={()=>{ if(current&&confirm("Padam tugasan ini?")){ const next=tasks.filter(t=>t.id!==current.id); setTasks(next); setTaskId(next.find(t=>t.tingkatan===form)?.id||""); }}} className="flex w-full items-center justify-center gap-2 rounded-2xl py-3 text-sm font-bold text-red-600"><Trash2 size={17}/>Padam tugasan</button></>:<div className="rounded-2xl bg-white p-8 text-center"><BookOpenCheck className="mx-auto text-slate-300"/><p className="mt-3 text-sm font-medium text-slate-400">Belum ada tugasan untuk {form}.</p><button onClick={()=>onAddTask(form)} className="mt-4 rounded-xl bg-[#163c35] px-4 py-2.5 text-xs font-bold text-white">Tambah tugasan</button></div>}</>}</div>;
 }
 
 function HafazanView({ students, onStudent }: { students: Student[]; onStudent: (id:string)=>void }) {
