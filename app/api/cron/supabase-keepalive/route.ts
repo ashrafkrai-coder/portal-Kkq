@@ -1,7 +1,17 @@
-const SUPABASE_URL = "https://ozdkphtsipnspiqkppnp.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY =
-  "sb_publishable_q8Oj_7dkOzHEU1ofgZkWQQ_lF2sfo6k";
 const CRON_SCHEDULE = "0 1 * * *";
+
+const SUPABASE_PROJECTS = [
+  {
+    name: "Portal Kkq",
+    url: "https://ozdkphtsipnspiqkppnp.supabase.co",
+    publishableKey: "sb_publishable_q8Oj_7dkOzHEU1ofgZkWQQ_lF2sfo6k",
+  },
+  {
+    name: "Sistem Kehadiran Masjid",
+    url: "https://warihgiicetafowbccvw.supabase.co",
+    publishableKey: "sb_publishable_iUyHx-9YVBCaCGnBcDRBzQ_6K0GFW3B",
+  },
+] as const;
 
 export const dynamic = "force-dynamic";
 
@@ -19,12 +29,12 @@ function isAuthorizedCronRequest(request: Request) {
   return hasValidSecret || isVercelCron;
 }
 
-async function pingSupabase() {
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/rpc/keepalive_ping`, {
+async function pingSupabase(project: (typeof SUPABASE_PROJECTS)[number]) {
+  const response = await fetch(`${project.url}/rest/v1/rpc/keepalive_ping`, {
     method: "POST",
     headers: {
-      apikey: SUPABASE_PUBLISHABLE_KEY,
-      authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+      apikey: project.publishableKey,
+      authorization: `Bearer ${project.publishableKey}`,
       "content-type": "application/json",
     },
     body: "{}",
@@ -32,7 +42,9 @@ async function pingSupabase() {
   });
 
   if (!response.ok) {
-    throw new Error(`Supabase keep-alive failed with status ${response.status}`);
+    throw new Error(
+      `${project.name} keep-alive failed with status ${response.status}`,
+    );
   }
 }
 
@@ -42,19 +54,34 @@ export async function GET(request: Request) {
   }
 
   try {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      await pingSupabase();
+    const results = [];
+
+    for (const project of SUPABASE_PROJECTS) {
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await pingSupabase(project);
+      }
+
+      results.push({
+        project: project.name,
+        queries: 3,
+        ok: true,
+      });
     }
 
     return Response.json({
       ok: true,
-      queries: 3,
+      projects: results,
+      totalQueries: results.reduce((sum, item) => sum + item.queries, 0),
       checkedAt: new Date().toISOString(),
     });
   } catch (error) {
     console.error("Supabase keep-alive failed", error);
     return Response.json(
-      { ok: false, error: "Supabase keep-alive failed" },
+      {
+        ok: false,
+        error:
+          error instanceof Error ? error.message : "Supabase keep-alive failed",
+      },
       { status: 502 },
     );
   }
