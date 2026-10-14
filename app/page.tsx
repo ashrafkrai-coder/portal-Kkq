@@ -177,15 +177,15 @@ export default function HomePage() {
       const idx = next.findIndex(s => s.id === row.ic || (s.tingkatan === row.tingkatan && normalizeName(s.nama) === normalizeName(row.nama)));
       return { row, idx };
     });
-    if (!confirm(`Import PBD KKQ 2026 (Tingkatan 1–3 al-Farabi)?\n\n${pending.filter(p => p.idx >= 0).length} murid sedia ada akan dikemas kini PBD, ${pending.filter(p => p.idx < 0).length} murid baharu akan didaftarkan (ID = No. IC).`)) return;
+    if (!confirm(`Import PBD & UASA KKQ 2026 (Tingkatan 1–3 al-Farabi)?\n\n${pending.filter(p => p.idx >= 0).length} murid sedia ada akan dikemas kini PBD dan markah UASA, ${pending.filter(p => p.idx < 0).length} murid baharu akan didaftarkan (ID = No. IC).`)) return;
     for (const { row } of pending) {
       const pbd = { Tajwid: row.tajwid, Qiraat: row.qiraat, Hafazan: row.hafazan, Tarannum: row.tarannum, TP: row.tp };
       const idx = next.findIndex(s => s.id === row.ic || (s.tingkatan === row.tingkatan && normalizeName(s.nama) === normalizeName(row.nama)));
-      if (idx >= 0) { next[idx] = { ...next[idx], pbd: { ...next[idx].pbd, ...pbd } }; updated++; }
-      else { next.push({ id: row.ic, nama: row.nama, tingkatan: row.tingkatan, fotoUrl: "", tarikhDaftar: today(), attendance: {}, tasks: {}, hafazan: [], pbd, ujian: { "Ujian 1": 0, UASA: 0 } }); added++; }
+      if (idx >= 0) { next[idx] = { ...next[idx], pbd: { ...next[idx].pbd, ...pbd }, ujian: { ...next[idx].ujian, UASA: row.uasa } }; updated++; }
+      else { next.push({ id: row.ic, nama: row.nama, tingkatan: row.tingkatan, fotoUrl: "", tarikhDaftar: today(), attendance: {}, tasks: {}, hafazan: [], pbd, ujian: { "Ujian 1": 0, UASA: row.uasa } }); added++; }
     }
     setStudents(next);
-    notify(`PBD diimport: ${updated} dikemas kini, ${added} murid baharu`);
+    notify(`PBD & UASA diimport: ${updated} dikemas kini, ${added} murid baharu`);
   }
   function updateStudentExam(id: string, ujian: string, markah: number) { if (markah < 0 || markah > 100) return; setStudents(xs => xs.map(s => s.id === id ? { ...s, ujian: { ...s.ujian, [ujian]: markah } } : s)); }
   function updatePhoto(file?: File) { if (!file || !file.type.startsWith("image/")) return; const reader = new FileReader(); reader.onload = () => { const img = new Image(); img.onload = () => { const canvas = document.createElement("canvas"), size = 360; canvas.width = size; canvas.height = size; const ctx = canvas.getContext("2d"); if (!ctx) return; const crop = Math.min(img.width, img.height), sx = (img.width - crop) / 2, sy = (img.height - crop) / 2; ctx.drawImage(img, sx, sy, crop, crop, 0, 0, size, size); const fotoUrl = canvas.toDataURL("image/jpeg", .82); setStudents(xs => xs.map(s => s.id === student.id ? { ...s, fotoUrl } : s)); notify("Foto murid berjaya dikemas kini"); }; img.src = String(reader.result); }; reader.readAsDataURL(file); }
@@ -327,7 +327,7 @@ function PbdMarkahView({ students, onPbdChange, onExamChange, onImport }: { stud
   const filtered = filterStudentRecords(students, form, search);
   const averageTp = filtered.length ? (filtered.reduce((sum, s) => sum + PBD_SKILLS.reduce((n, key) => n + (s.pbd[key] || 0), 0) / PBD_SKILLS.length, 0) / filtered.length).toFixed(1) : "0.0";
   const averageUasa = filtered.length ? Math.round(filtered.reduce((sum, s) => sum + (s.ujian.UASA || 0), 0) / filtered.length) : 0;
-  return <div className="space-y-5"><PageTitle title="PBD & Markah" note="Pilih tingkatan dahulu, kemudian cari murid"/><button type="button" onClick={onImport} className="w-full rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-bold text-violet-800 active:scale-[0.99]">Import PBD KKQ 2026 (Tingkatan 1–3 al-Farabi)</button><StudentRecordFilter form={form} setForm={setForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod PBD dan markah."/>:<>
+  return <div className="space-y-5"><PageTitle title="PBD & Markah" note="Pilih tingkatan dahulu, kemudian cari murid"/><button type="button" onClick={onImport} className="w-full rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-bold text-violet-800 active:scale-[0.99]">Import PBD & UASA KKQ 2026 (Tingkatan 1–3 al-Farabi)</button><StudentRecordFilter form={form} setForm={setForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod PBD dan markah."/>:<>
     <section className="grid grid-cols-2 gap-3"><div className="card"><span className="grid size-9 place-items-center rounded-xl bg-violet-50 text-violet-700"><GraduationCap size={18}/></span><b className="mt-3 block text-2xl">TP{averageTp}</b><small className="text-slate-400">Purata PBD</small></div><div className="card"><span className="grid size-9 place-items-center rounded-xl bg-rose-50 text-rose-700"><ClipboardCheck size={18}/></span><b className="mt-3 block text-2xl">{averageUasa}%</b><small className="text-slate-400">Purata UASA</small></div></section>
     <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">Perubahan disimpan secara automatik ke Supabase.</p>
     <section className="space-y-3">{filtered.length?filtered.map(s => <article key={s.id} className="card"><div className="flex items-center gap-3"><Avatar student={s}/><div className="min-w-0"><h3 className="truncate text-sm font-black">{s.nama}</h3><p className="text-xs text-slate-400">{s.tingkatan}</p></div></div>
