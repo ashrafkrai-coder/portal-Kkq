@@ -6,6 +6,7 @@ import { BookCheck, BookOpenCheck, CalendarCheck, Camera, Check, ChevronRight, C
 import { Progress } from "@/components/ui/progress";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { PBD_AF_2026, normalizeName } from "@/lib/pbd-af-2026";
 
 type Tab = "dashboard" | "kehadiran" | "tugasan" | "hafazan" | "pbd" | "profil";
 type Student = {
@@ -28,7 +29,7 @@ const TARGETS: Record<string, HafazanTarget[]> = {
 const PBD_SKILLS = ["Tajwid", "Hafazan", "Qiraat", "Tarannum"] as const;
 const normalizeStudent = (student: Student): Student => {
   const oldTilawah = student.pbd.Tilawah;
-  return { ...student, hafazan: student.hafazan.map(h => ({ ...h, surahNama: h.surahNama === "As-Sajdah" ? "Al-Sajdah" : h.surahNama })), pbd: { Tajwid: student.pbd.Tajwid ?? 1, Hafazan: student.pbd.Hafazan ?? 1, Qiraat: student.pbd.Qiraat ?? oldTilawah ?? 1, Tarannum: student.pbd.Tarannum ?? 1 } };
+  return { ...student, hafazan: student.hafazan.map(h => ({ ...h, surahNama: h.surahNama === "As-Sajdah" ? "Al-Sajdah" : h.surahNama })), pbd: { Tajwid: student.pbd.Tajwid ?? 1, Hafazan: student.pbd.Hafazan ?? 1, Qiraat: student.pbd.Qiraat ?? oldTilawah ?? 1, Tarannum: student.pbd.Tarannum ?? 1, ...(student.pbd.TP ? { TP: student.pbd.TP } : {}) } };
 };
 const targetProgress = (student: Student, target: HafazanTarget) => Math.min(student.hafazan.find(h => h.surahNama === target.surah)?.ayatAkhir || 0, target.ayat);
 const overallHafazan = (student: Student) => { const targets = TARGETS[student.tingkatan] || []; const total = targets.reduce((n,t)=>n+t.ayat,0); const done = targets.reduce((n,t)=>n+targetProgress(student,t),0); return { targets, total, done, progress: total ? Math.round(done/total*100) : 0 }; };
@@ -169,6 +170,23 @@ export default function HomePage() {
   function updatePbd() { const raw = prompt("Masukkan TP Hafazan (1–6)", String(student.pbd.Hafazan || 1)); const tp = Number(raw); if (tp >= 1 && tp <= 6) { setStudents(xs => xs.map(s => s.id === student.id ? { ...s, pbd: { ...s.pbd, Hafazan: tp } } : s)); notify(`PBD Hafazan dikemas kini kepada TP${tp}`); } }
   function updateExam() { const raw = prompt("Masukkan markah UASA (0–100)", String(student.ujian.UASA || 0)); const mark = Number(raw); if (mark >= 0 && mark <= 100) { setStudents(xs => xs.map(s => s.id === student.id ? { ...s, ujian: { ...s.ujian, UASA: mark } } : s)); notify("Markah UASA dikemas kini"); } }
   function updateStudentPbd(id: string, kemahiran: string, tp: number) { if (tp < 1 || tp > 6) return; setStudents(xs => xs.map(s => s.id === id ? { ...s, pbd: { ...s.pbd, [kemahiran]: tp } } : s)); notify(`${kemahiran} dikemas kini kepada TP${tp}`); }
+  function importPbdAf() {
+    const next = [...students];
+    let updated = 0, added = 0;
+    const pending = PBD_AF_2026.map(row => {
+      const idx = next.findIndex(s => s.id === row.ic || (s.tingkatan === row.tingkatan && normalizeName(s.nama) === normalizeName(row.nama)));
+      return { row, idx };
+    });
+    if (!confirm(`Import PBD KKQ 2026 (Tingkatan 1–3 al-Farabi)?\n\n${pending.filter(p => p.idx >= 0).length} murid sedia ada akan dikemas kini PBD, ${pending.filter(p => p.idx < 0).length} murid baharu akan didaftarkan (ID = No. IC).`)) return;
+    for (const { row } of pending) {
+      const pbd = { Tajwid: row.tajwid, Qiraat: row.qiraat, Hafazan: row.hafazan, Tarannum: row.tarannum, TP: row.tp };
+      const idx = next.findIndex(s => s.id === row.ic || (s.tingkatan === row.tingkatan && normalizeName(s.nama) === normalizeName(row.nama)));
+      if (idx >= 0) { next[idx] = { ...next[idx], pbd: { ...next[idx].pbd, ...pbd } }; updated++; }
+      else { next.push({ id: row.ic, nama: row.nama, tingkatan: row.tingkatan, fotoUrl: "", tarikhDaftar: today(), attendance: {}, tasks: {}, hafazan: [], pbd, ujian: { "Ujian 1": 0, UASA: 0 } }); added++; }
+    }
+    setStudents(next);
+    notify(`PBD diimport: ${updated} dikemas kini, ${added} murid baharu`);
+  }
   function updateStudentExam(id: string, ujian: string, markah: number) { if (markah < 0 || markah > 100) return; setStudents(xs => xs.map(s => s.id === id ? { ...s, ujian: { ...s.ujian, [ujian]: markah } } : s)); }
   function updatePhoto(file?: File) { if (!file || !file.type.startsWith("image/")) return; const reader = new FileReader(); reader.onload = () => { const img = new Image(); img.onload = () => { const canvas = document.createElement("canvas"), size = 360; canvas.width = size; canvas.height = size; const ctx = canvas.getContext("2d"); if (!ctx) return; const crop = Math.min(img.width, img.height), sx = (img.width - crop) / 2, sy = (img.height - crop) / 2; ctx.drawImage(img, sx, sy, crop, crop, 0, 0, size, size); const fotoUrl = canvas.toDataURL("image/jpeg", .82); setStudents(xs => xs.map(s => s.id === student.id ? { ...s, fotoUrl } : s)); notify("Foto murid berjaya dikemas kini"); }; img.src = String(reader.result); }; reader.readAsDataURL(file); }
 
@@ -185,7 +203,7 @@ export default function HomePage() {
       {tab === "kehadiran" && <AttendanceView students={students} setStudents={setStudents} sessions={sessions} sessionNo={sessionNo} setSessionNo={setSessionNo} setSessions={setSessions} onStudent={selectStudent} notify={notify}/>} 
       {tab === "tugasan" && <TasksView students={students} setStudents={setStudents} tasks={tasks} taskId={taskId} setTaskId={setTaskId} setTasks={setTasks} onAddTask={openAddTask} notify={notify}/>}
       {tab === "hafazan" && <HafazanView students={students} onStudent={selectStudent}/>} 
-      {tab === "pbd" && <PbdMarkahView students={students} onPbdChange={updateStudentPbd} onExamChange={updateStudentExam}/>} 
+      {tab === "pbd" && <PbdMarkahView students={students} onPbdChange={updateStudentPbd} onExamChange={updateStudentExam} onImport={importPbdAf}/>} 
       {tab === "profil" && <ProfileView students={filtered} search={search} setSearch={setSearch} profileForm={profileForm} setProfileForm={setProfileForm} onStudent={selectStudent}/>} 
     </div>
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/70 bg-white/90 px-1 pb-[max(.35rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-2xl"><div className="mx-auto grid max-w-xl grid-cols-7">{nav.slice(0,3).map(item => <NavItem key={item.id} item={item} tab={tab} setTab={setTab}/>)}<button onClick={() => setSheet("scan")} aria-label="Imbas kad NFC" className="flex min-h-[3.35rem] flex-col items-center justify-center gap-0.5 rounded-xl text-[9px] font-semibold text-emerald-800 active:bg-emerald-50"><span className={`relative isolate grid size-7 place-items-center rounded-full text-white transition-colors ${scanState === "scanning" ? "nfc-scanning bg-[#d7ed73] text-[#163c35]" : "bg-[#163c35]"}`}><Nfc size={16} strokeWidth={2.4}/></span><span>{scanState === "scanning" ? "Mengimbas" : "NFC"}</span></button>{nav.slice(3).map(item => <NavItem key={item.id} item={item} tab={tab} setTab={setTab}/>)}</div></nav>
@@ -303,17 +321,18 @@ function HafazanView({ students, onStudent }: { students: Student[]; onStudent: 
   return <div className="space-y-5"><PageTitle title="Perkembangan Hafazan" note="Pilih tingkatan dahulu, kemudian cari murid"/><StudentRecordFilter form={form} setForm={setForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod hafazan."/>:<><section className="card"><div className="mb-4 flex items-center justify-between"><div><span className="badge bg-amber-100 text-amber-800">{form}</span><p className="mt-2 text-xs text-slate-400">{filtered.length} murid dipaparkan • {targets.length} surah</p></div></div><div className="space-y-3">{targets.map(target=>{const group=students.filter(s=>s.tingkatan===form),progress=group.length?Math.round(group.reduce((n,s)=>n+targetProgress(s,target)/target.ayat*100,0)/group.length):0;return <div key={target.surah} className="rounded-2xl bg-amber-50/80 p-3"><div className="flex justify-between gap-3 text-sm"><b>{target.surah}</b><span className="font-black text-amber-800">{progress}%</span></div><p className="mt-1 text-xs text-slate-500">Sasaran {target.ayat} ayat</p><Progress value={progress} className="mt-2 bg-amber-100 [&_[data-slot=progress-indicator]]:bg-amber-500"/></div>})}</div></section><section><SectionTitle title="Rekod murid"/><div className="space-y-2">{filtered.length?filtered.map(s => { const summary=overallHafazan(s), active=activeHafazanTarget(s); return <button key={s.id} onClick={()=>onStudent(s.id)} className="card flex w-full items-center gap-3 text-left"><Avatar student={s}/><div className="min-w-0 flex-1"><b className="block truncate text-sm">{s.nama}</b><p className="truncate text-xs text-slate-400">{active ? `Seterusnya: ${active.surah} • ${targetProgress(s,active)}/${active.ayat} ayat` : "Semua sasaran lengkap"}</p><Progress value={summary.progress} className="mt-2 h-1.5 bg-amber-100 [&_[data-slot=progress-indicator]]:bg-amber-500"/></div><span className={`badge ${summary.progress===100?"bg-emerald-100 text-emerald-700":"bg-amber-100 text-amber-700"}`}>{summary.progress}%</span></button>}):<RecordEmpty/>}</div></section></>}</div>;
 }
 
-function PbdMarkahView({ students, onPbdChange, onExamChange }: { students: Student[]; onPbdChange: (id:string, kemahiran:string, tp:number)=>void; onExamChange: (id:string, ujian:string, markah:number)=>void }) {
+function PbdMarkahView({ students, onPbdChange, onExamChange, onImport }: { students: Student[]; onPbdChange: (id:string, kemahiran:string, tp:number)=>void; onExamChange: (id:string, ujian:string, markah:number)=>void; onImport: ()=>void }) {
   const [form, setForm] = useState("");
   const [search, setSearch] = useState("");
   const filtered = filterStudentRecords(students, form, search);
   const averageTp = filtered.length ? (filtered.reduce((sum, s) => sum + PBD_SKILLS.reduce((n, key) => n + (s.pbd[key] || 0), 0) / PBD_SKILLS.length, 0) / filtered.length).toFixed(1) : "0.0";
   const averageUasa = filtered.length ? Math.round(filtered.reduce((sum, s) => sum + (s.ujian.UASA || 0), 0) / filtered.length) : 0;
-  return <div className="space-y-5"><PageTitle title="PBD & Markah" note="Pilih tingkatan dahulu, kemudian cari murid"/><StudentRecordFilter form={form} setForm={setForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod PBD dan markah."/>:<>
+  return <div className="space-y-5"><PageTitle title="PBD & Markah" note="Pilih tingkatan dahulu, kemudian cari murid"/><button type="button" onClick={onImport} className="w-full rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-bold text-violet-800 active:scale-[0.99]">Import PBD KKQ 2026 (Tingkatan 1–3 al-Farabi)</button><StudentRecordFilter form={form} setForm={setForm} search={search} setSearch={setSearch}/>{!form?<ChooseFormEmpty text="Pilih tingkatan untuk memaparkan rekod PBD dan markah."/>:<>
     <section className="grid grid-cols-2 gap-3"><div className="card"><span className="grid size-9 place-items-center rounded-xl bg-violet-50 text-violet-700"><GraduationCap size={18}/></span><b className="mt-3 block text-2xl">TP{averageTp}</b><small className="text-slate-400">Purata PBD</small></div><div className="card"><span className="grid size-9 place-items-center rounded-xl bg-rose-50 text-rose-700"><ClipboardCheck size={18}/></span><b className="mt-3 block text-2xl">{averageUasa}%</b><small className="text-slate-400">Purata UASA</small></div></section>
     <p className="rounded-2xl bg-emerald-50 px-4 py-3 text-xs font-semibold text-emerald-800">Perubahan disimpan secara automatik ke Supabase.</p>
     <section className="space-y-3">{filtered.length?filtered.map(s => <article key={s.id} className="card"><div className="flex items-center gap-3"><Avatar student={s}/><div className="min-w-0"><h3 className="truncate text-sm font-black">{s.nama}</h3><p className="text-xs text-slate-400">{s.tingkatan}</p></div></div>
       <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">{PBD_SKILLS.map(skill => <label key={skill} className="rounded-xl bg-violet-50 p-2 text-[10px] font-bold text-violet-700">{skill}<select aria-label={`${skill} untuk ${s.nama}`} value={s.pbd[skill] || 1} onChange={e=>onPbdChange(s.id, skill, Number(e.target.value))} className="mt-1 w-full bg-transparent text-base font-black text-violet-950 outline-none">{[1,2,3,4,5,6].map(tp=><option key={tp} value={tp}>TP{tp}</option>)}</select></label>)}</div>
+      {s.pbd.TP ? <label className="mt-2 block rounded-xl bg-emerald-50 p-2 text-[10px] font-bold text-emerald-700">TP Keseluruhan<select aria-label={`TP keseluruhan untuk ${s.nama}`} value={s.pbd.TP} onChange={e=>onPbdChange(s.id, "TP", Number(e.target.value))} className="mt-1 w-full bg-transparent text-base font-black text-emerald-950 outline-none">{[1,2,3,4,5,6].map(tp=><option key={tp} value={tp}>TP{tp}</option>)}</select></label> : null}
       <div className="mt-3 grid grid-cols-2 gap-2">{["Ujian 1", "UASA"].map(test => <label key={test} className="rounded-xl bg-slate-50 p-2 text-[10px] font-bold text-slate-500">{test}<span className="mt-1 flex items-center"><input aria-label={`${test} untuk ${s.nama}`} type="number" inputMode="numeric" min="0" max="100" value={s.ujian[test] ?? 0} onChange={e=>onExamChange(s.id, test, Math.max(0, Math.min(100, Number(e.target.value))))} className="w-full bg-transparent text-base font-black text-slate-900 outline-none"/><b className="text-xs text-slate-400">%</b></span></label>)}</div>
     </article>):<RecordEmpty/>}</section></>}</div>;
 }
